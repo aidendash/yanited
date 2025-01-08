@@ -1,0 +1,485 @@
+---
+title: "Regression Analysis of Manchester United's 2022/23 Season"
+author: "Aiden"
+output: 
+  html_document:
+    toc: true
+    toc_title: "Table of Contents"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+Manchester United Football Club is one of the most famous and successful football clubs in the world. Based in Manchester, England, the club was founded in 1878 as Newton Heath LYR Football Club before changing its name to Manchester United in 1902. The team plays its home matches at Old Trafford, a stadium with a seating capacity of over 74,000.
+
+The club has won numerous domestic and international trophies, including 20 English league titles, 12 FA Cups, and 3 UEFA Champions League titles. Manchester United has been known for its attacking style of play and its legendary players, such as Cristiano Ronaldo, Bobby Charlton, George Best, Eric Cantona, and Ryan Giggs. The club has a huge global fanbase and is often considered one of the wealthiest and most commercially successful sports teams in the world.
+
+Historically, the club enjoyed great success under manager Sir Alex Ferguson, who led Manchester United to numerous titles during his 26-year tenure before retiring in 2013. The club's fortunes have varied since then, with several managerial changes and attempts to return to its former glory.
+
+This dataset includes the statistics of all Manchester United players in season 2022-2023. It includes statistics of all competitions and only players who have played. For more or detailed statistics, please refer to https://fbref.com/en/squads/19538871/2022-2023/all_comps/Manchester-United-Stats-All-Competitions.
+
+This dataset also include match statistics of Manchester United in season 2022-2023. It's for highlighting which are the most important traits that contributes to win or lose matches.
+
+Source: https://www.kaggle.com/datasets/hkwindvolder/manutd-2023-player-statistics?select=ManUtd+2023+Match+Statistics.csv
+
+## Purpose
+Over the last 10 years, Manchester United has not been in contention for the Premier League. After £1 billion spent on players' transfer fees, some questions need to be asked on how the team plays. Personally, I believe the team has not been consistently playing well despite the amount of money injected into the squad. I aim to predict what leads Man Utd to win football matches based on match statistics, while providing some insights on the key attributes during football matches.
+
+# Preliminary Analysis
+```{r message=FALSE, warning=FALSE}
+#Importing required libraries
+library(ggplot2)
+library(tidyverse)
+library(glmnet)
+library(car)
+library(detectseparation)
+library(ResourceSelection)
+library(pROC)
+library(Metrics)
+library(caret)
+```
+
+
+Reading in Man Utd player dataset
+```{r}
+manutd_players = read.csv("ManUtdplayer.csv", header=TRUE)
+```
+
+```{r,warning=FALSE}
+#Plotting Age vs Matches Played
+average.age = mean(manutd_players$Age) #Average Age of Man Utd's squad
+print(average.age) #25.8
+
+ggplot(data = manutd_players, mapping=aes(x=Age, y=Match.Played))+
+  geom_col(fill = "orange")+
+  geom_vline(xintercept = 25.8,                # Vertical line at x = 25
+             color = "blue",                  # Line color
+             linetype = "dashed",           # Line type (optional)
+             size = 0.7)+
+  geom_text(aes(x = 25.9, y = max(Match.Played) + 40, label = "Average age"), 
+            color = "blue",                 # Text color
+            angle = 0,                      # Angle of text
+            hjust = 0,                      # Horizontal alignment
+            vjust = 0) +                    # Vertical alignment
+  labs(x = "Age", y = "Matches Played", title = "Age vs Matches Played")+
+  theme_linedraw()+
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(size = 7) # Adjust text size
+  )+ylim(0,100)
+
+```
+
+As per the plot above, Man Utd has a mixture of experience and young talent with two noticeable peaks at around ages 23 and 30. The average age of a player in the Man Utd squad is 25.8.
+
+```{r}
+#Who has been scoring the goals?
+
+# Filter the data and exclude players with less than 6 goals
+manutd_scored = manutd_players %>%
+  filter(Matches == Matches , Goals > 5)
+
+ggplot(data=manutd_scored, mapping = aes(x=Player, y=Goals))+
+  geom_col(fill = "orange")+
+  labs(x = "Player", y = "Goals Scored", title = "Players vs Goals Scored")+
+  theme_linedraw()+
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(size = 7) # Adjust text size
+  )+ylim(0,30)
+```
+
+During the 2022/23 campaign, Marcus Rashford (Forward) was the most prolific goalscorer across all competitions for Manchester United with 30 goals. Bruno Fernandes is second in that category, but is far behind with 14 goals; just below half of Rashford's goal tally.
+
+```{r}
+#Who has been creating goals?
+
+# Filter the data and exclude players with less than 4 Assists
+manutd_assist = manutd_players %>%
+  filter(Matches == Matches , Assist >= 4)
+
+ggplot(data=manutd_assist, mapping = aes(x=Player, y=Assist))+
+  geom_col(fill = "orange")+
+  labs(x = "Player", y = "Assists", title = "Players vs Assists")+
+  theme_linedraw()+
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(size = 7) # Adjust text size
+  )+
+  scale_y_continuous(breaks = seq(0, ceiling(max(manutd_assist$Assist)), by=1))
+```
+
+Here, Bruno Fernandes (Midfielder) shines as he tops the assist charts for Manchester United which is a testament to his goal creation. Christian Eriksen (Midfielder) comes close in behind with 10 assists while Rashford comes 3rd best with 9.
+
+```{r, warning=FALSE}
+#Has each player been clinical in front of goal?
+ggplot(data=manutd_players, mapping = aes(x=Expected.Goals, y=Goals))+
+  geom_point()+
+  geom_abline(slope = 1, intercept = 0,       # y = x line
+              color = "red", linetype = "dashed")+
+  labs(x = "Expected Goals", y = "Goals", title = "Expected Goals vs Goals")+
+  theme_linedraw()+
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(size = 7)# Adjust text size
+  )
+```
+
+Individually, Man Utd players are moderate in expected goals vs goals. In other words, there is not a consistent pattern indicating that players are scoring according to expected goals because around half of the goals are below the goals to expected goals ratio.
+
+This plot identifies that Man Utd struggled to capitalise on their goal-scoring opportunities in the 22/23 season.
+
+# Data Manipulation
+This dataset contains variables that are out of scope and domain knowledge of pattern of play. I have delete null irrelevant columns in Excel and renamed 'Man Utd Statistics' into 'Man Utd Tidy'.
+```{r, warning=FALSE}
+#Reading in the datasets
+manutd.data = read.csv("ManUtdTidy.csv", header=TRUE)
+manutd.data = manutd.data %>% 
+  select(-X, -X.1,-X.2,-X.3,-X.4,-X.5,-X.6,-X.7,-X.8,-X.9,-X.10,-X.11,-X.12,-X.13,-X.14,-X.15,-X.16,-X.17,-X.18,-X.19,-X.20,-X.21,-X.22,-X.23,-X.24, -Points, -Post.shot.Expected.Goals, -Crosses.Faced.By.Goalkeeper,-Crosses.Into.Penalty.Area, -Short.Passes.Completion.Percentage, -Medium.Passes.Completion.Percentage, -Long.Passes.Completion.Percentage, -Errors)
+
+manutd.data = manutd.data[-62,]
+
+#Result is binary so let a Win = 1, and not a win (D or L) = 0
+manutd.data$Result[manutd.data$Result == "W"] = 1
+manutd.data$Result[manutd.data$Result == "D"] = 0 
+manutd.data$Result[manutd.data$Result == "L"] = 0
+
+#Possession inputs are in % terms, so let's convert to decimal form
+manutd.data$Possession....=manutd.data$Possession..../100
+
+#Same for venue: Let home = 1, and not home = 0
+manutd.data$Venue[manutd.data$Venue == "Home"] = 1
+manutd.data$Venue[manutd.data$Venue == "Away"] = 0
+manutd.data$Venue[manutd.data$Venue == "Neutral"] = 0
+
+manutd.data = as_tibble(manutd.data)
+manutd.data$Result = as.numeric(manutd.data$Result)
+manutd.data = data.frame(lapply(manutd.data, as.numeric))
+
+manutd.data$Venue = as.factor(manutd.data$Venue)
+manutd.data$Clean.Sheets = as.factor(manutd.data$Clean.Sheets)
+
+#Replacing NA values with the mean of each respective column
+manutd.data[] = lapply(manutd.data, function(x) {
+  x[is.na(x)] = mean(x, na.rm = TRUE)
+  return(x)
+})
+
+```
+
+Checking the dimensions of the dataset
+```{r}
+print(dim(manutd.data))
+```
+
+Initial look at the dataset
+```{r}
+#Initial look at the dataset
+summary(manutd.data)
+```
+
+Now, is the dataset balanced or not?
+```{r}
+ggplot(data = manutd.data, mapping = aes(y=Result))+
+  geom_bar(fill="orange")+
+  labs(x="Count", y="Result Type", title="Number of Wins vs Losses in the dataset")+
+  scale_y_continuous(breaks = c(0, 1))+
+    theme(plot.title = element_text(hjust = 0.5))
+```
+
+As per the plot above, there appears to be more observations for a Man Utd win than a Man Utd loss.
+
+# Model Building and analysis
+Since the desired outcome is to predict a win or loss and the fact that Result is binary, a logistic model seems an appropiate fit to the data.
+
+Fitting the Logistic Regression model
+```{r, warning=FALSE}
+#Fitting the model with all possible variables. 
+#Included weights to the data as there is an imbalance in the dataset
+model.fit = glm(Result~.,data=manutd.data, family = "binomial"(link = logit),weights = ifelse(manutd.data$Result == 0, 20, 1))
+summary(model.fit) #A bit dreadful at the moment
+```
+
+Trying Backwards Stepwise Regression
+```{r, results='hide', warning=FALSE, message=FALSE}
+backward_model = step(model.fit, direction = "backward", trace = 1)
+```
+
+Inspecting the Stepwise model plus an interaction between Shot.Against and Blocks (Based on AIC)
+```{r, warning=FALSE}
+model = glm(Result ~ Venue + Clean.Sheets+Goals + Passes.Attempted.By.Goalkeeper + 
+    Medium.Passes.Attemped + Tackles + Tackles.in.Defensive.Third + 
+    Tackles.in.Middle.Third + Blocks + Shot.Against + Touches +Shot.Against*Blocks, family = "binomial"(link = logit), 
+    data = manutd.data)
+
+vif(model, type="predictor") 
+```
+High Multicollinearity in the model.
+
+Checking for perfect seperation
+```{r, message=FALSE}
+regressors = manutd.data %>% 
+  select(Goals , Passes.Attempted.By.Goalkeeper ,
+    Medium.Passes.Attemped ,Tackles , Tackles.in.Defensive.Third , 
+    Tackles.in.Middle.Third , Blocks , Shot.Against ,Touches ,Shot.Against:Blocks)
+
+
+seperation.result = detect_separation(y = manutd.data$Result, x =regressors  , family = binomial())
+print(seperation.result)
+
+table(manutd.data$Venue, manutd.data$Result) #No perfect seperation between Venue and Result
+table(manutd.data$Clean.Sheets, manutd.data$Result) #No perfect seperation between Clean sheet and Result
+```
+There is no perfect seperation within the model.
+
+Performing a Ridge logistic regression to reduce the effect of multicollinearity
+```{r}
+#Creating new Dataset for Ridge Regression, only including variables from backwards stepwise regresison
+ridge_dataset = manutd.data %>% 
+  select(Venue, Clean.Sheets,Goals, Passes.Attempted.By.Goalkeeper , 
+    Medium.Passes.Attemped , Tackles , Tackles.in.Defensive.Third , 
+    Tackles.in.Middle.Third , Blocks , Shot.Against , Touches, Result, Shot.Against:Blocks)
+
+ridge_dataset = ridge_dataset %>% 
+  mutate(Shot.Against.Blocks = ridge_dataset$Shot.Against*ridge_dataset$Blocks)
+
+# Dataset with only predictors
+ridge_regressors = ridge_dataset %>% 
+  select(-Result)
+
+#Creating a matrix for regressors
+x = as.matrix(ridge_regressors) # Predictors (all columns except the response)
+y = ridge_dataset$Result
+
+#Defining weights for imbalanced data
+weights = ifelse(y == 0, length(y) / sum(y == 0), 1)  # Inverse class frequencies
+
+
+#Fitting Ridge model
+ridge_model = glmnet(x, y, family="binomial",alpha = 0,weights=weights)
+plot(ridge_model)    # Draw plot of coefficients
+
+#performing LOOCV for the Ridge model as dataset is relatively small
+cv_loocv = cv.glmnet(x, y, alpha = 0, family = "binomial", nfolds = 5, weight= weights)
+best_lambda = cv_loocv$lambda.min
+
+ridge_final = glmnet(x, y, family = "binomial", alpha = 0, weight=weights,lambda = best_lambda)
+
+
+#Plot of the lambdas
+plot(cv_loocv)
+
+#Coefficients of Ridge logistic model
+coef(ridge_final, s = "lambda.min")
+```
+
+# Method and Assumption checks
+Null Model (Baseline Model) for Comparision
+```{r}
+# Fit null logistic model
+null_model = glm(manutd.data$Result ~ 1, family = "binomial", data=manutd.data)
+summary(null_model)
+```
+The baseline model predicts a constant probability for all observations. Note, that the p-value for $\beta_0$ < 0.05 which rejects the null hypothesis that the intercept equals 0.
+
+
+Extracting the intercept value
+```{R}
+# Extract the intercept
+beta_0 = coef(null_model)[1]
+
+# Compute constant predicted probability
+p_hat = 1 / (1 + exp(-beta_0)) #Inverse of logit
+
+# Predicted classes based on threshold
+predicted_class = ifelse(p_hat >= 0.5, 1, 0)
+```
+
+
+```{r}
+#Calculating predicted values of the logistic model with ridge penalisation
+predictions = predict(ridge_final,newx = x, s=best_lambda, type="response")
+
+#Transforming predictions into binary outcomes
+predicted_classes = ifelse(predictions >= 0.5, 1,0)
+```
+
+Confusion Matrix
+```{r}
+# Confusion matrix
+Confusion.matrix = table(Predicted = predicted_classes, Actual = y)
+print(Confusion.matrix)
+```
+
+```{r}
+#Estimated specificity, sensiticity, and prediction error
+specificity = 19/(19+4); sensitivity = 37/(37+1)
+print(specificity); print(sensitivity) #Specificity and sensitivity respectively
+
+prediction.error = (1+4)/(19+4+1+37)
+print(prediction.error)
+
+```
+From the Confusion matrix, the probability that the model predicts a win, given the Result is a win is 0.97. Moreover, the probability that the model predicts a loss, given the Result is a loss is 0.83.
+
+Calculating Accuracy, Precision, Recall, and F1-Score of the model from the Confusion Matrix
+```{r}
+accuracy = (19+37)/(19+4+37+1) #proportion of correct predictions (both true positives and true negatives) out of all predictions made
+precision = 19/(19+1) #accuracy of the positive predictions made by the model
+recall = 37/(37+4) #how well the model identifies positive instances
+
+#Computing the F1-score since dataset is imbalanced
+f1.score = 2*(precision*recall)/(precision+recall) #the harmonic mean of precision and recall
+```
+
+
+```{r}
+print(precision)
+```
+A precision of 95% indicates that the model's predictions of a win matched the actual values 95% of the time
+
+```{r}
+print(recall)
+```
+A recall value of 0.90 indicates the model is strong in identifying whenever Man Utd would win
+
+```{r}
+print(f1.score)
+```
+F1-score indicates the model achieves a good balance between identifying most wins (recall) and not over-predicting (precision) Results.
+
+
+```{r, warning=FALSE, message=FALSE}
+# Estimate of AUC 
+roc_curve = roc(y, predictions) # ROC curve
+plot(roc_curve, grid=TRUE, col="orange",print.thres = "best") #Plot ROC curve alongside the point that maximises both sensitivity and specificity
+```
+
+Area under ROC curve
+```{r}
+auc(y, predictions)
+```
+Predictors are excellent in the model in predicting Man Utd's Result for a imbalanced and moderate sized dataset
+
+Hosmer and Lemeshow GOF test
+```{r}
+hoslem.test(y, predict(ridge_final, newx = x, type = "response"))
+```
+P-value > 0.05 which indicates a failure to reject the null hypothesis that there is a lack of fit of the model to the data.
+
+Residual vs Fitted values plot of Logistic model without Ridge penalisation
+```{r, warning=FALSE}
+residuals.deviance = residuals(model, type = "deviance")
+print(mean(residuals.deviance)) #Mean of deviance residuals close to 0
+
+residuals.pearson = residuals(model, type="pearson")
+print(mean(residuals.pearson)) #Mean of pearson residuals close to 0
+```
+Means of both Deviance and Pearson residuals are close to 0, indicating a good fit.
+
+Residual vs Fitted values plot of Logistic model without Ridge penalisation
+```{r}
+plot(fitted(model), residuals(model, type="response"), main = "Residuals vs Fitted")+
+  abline(h = 0, col = "red")
+```
+Bands of residuals are forming above and below 0 at the tails of residuals = 0. Some residual observations hover around 0, which could indicate a possible overfit. 
+
+Deviance of the baseline model
+```{r}
+deviance(model)
+1 - pchisq(deviance(model), 48)
+```
+Pretty small deviance which indicate the number of predictors close to saturation. Large p-value under chi-square distribution indicates a failure to reject the null hypothesis that the model is correct.
+
+
+Checking the Deviance and Pearson residuals of the final model (Ridge)
+```{r}
+# Deviance residuals
+deviance_residuals = sign(y - predictions) * 
+  sqrt(-2 * (y * log(predictions) + (1 - y) * log(1 - predictions)))
+
+summary(deviance_residuals) #Residuals are between -2 and 2
+
+# Pearson residuals
+pearson_residuals = (y - predictions) / 
+  sqrt(predictions * (1 - predictions))
+
+
+# Plot residuals of ridge penalised model
+par(mfrow = c(1, 2))
+plot(deviance_residuals, main = "Deviance Residuals", ylab = "Residuals", xlab = "Index")+
+plot(pearson_residuals, main = "Pearson Residuals", ylab = "Residuals", xlab = "Index")
+```
+Residuals for the case of both deviance and Pearson scatter around zero, with no noticeable trend or pattern. Moreover, residuals are between -2 and 2, indicating no outliers. As the respective index increases, variability in the residuals does not appear to increase.
+
+
+Log-loss of the baseline model vs the fitted Ridge logistic model
+```{r}
+# Calculate log-loss of fitted model
+log_loss.model = logLoss(actual = y,predicted = predictions)
+
+# Print log-loss
+print(log_loss.model)
+
+# Calculate log-loss of logistic null model (baseline model)
+log_loss_baseline = logLoss(manutd.data$Result, predicted = p_hat)
+print(log_loss_baseline)
+```
+The log-Loss of the fitted model is less than the log-Loss of the baseline logistic model, indicating that the ridge model is a better predictor than the baseline model and regularisation via Ridge improved the model's performance.
+
+
+Histogram of residuals
+```{r}
+hist(pearson_residuals, main = "Histogram of Pearson Residuals", xlab = "Residuals")
+qqnorm(pearson_residuals); qqline(pearson_residuals)
+```
+
+Residuals are centered around 0.0 - 0.5 with an approximate normal distribution. Q-Q plot is almost on the 45 degree line understandibly as the dataset is quite small
+
+# Interpretation
+Coefficients of the model
+```{r}
+#Coefficients of the model
+coefs = coef(ridge_final)
+print(coefs)
+```
+## Model
+The equation for the logistic regression model is:
+$$\text{logit}(p_i)=-3.32+0.59\text{Venue}+2.14\text{CleanSheet}+1.36\text{Goals}+0.02\text{GKpasses}-0.03\text{Tackles} +0.03\text{TacklesDefensiveThird}+0.21\text{TacklesMiddleThird}-0.04\text{Blocks}-0.13\text{ShotsBlocked}$$
+
+
+### Explanation:
+- \( p_i \) is the predicted probability for observation \( i \).
+- \( \text{logit}(p_i) \) is the log-odds of the predicted probability.
+- Each coefficient corresponds to the associated predictor variable (e.g., \( \text{Venue}, \text{Clean Sheet}, \text{Goals}, \) etc.).
+
+The coefficients indicate the impact of each predictor on the log-odds of the a Man Utd win.
+
+
+The loss function for logistic regression with ridge penalisation, where \( \lambda = 0.03 \), is:
+$$
+\mathcal{L}(\beta) = - \frac{1}{62} \sum_{i=1}^{62} \left[ \text{Result}_i \log \hat{p}_i + (1 - \text{Result}_i) \log (1 - \hat{p}_i) \right] 
++ \frac{0.03}{2} \sum_{j=1}^{101} \beta_j^2
+$$
+
+### Key Predictors 
+The intercept value indicates that, without any influence from the predictors, the odds of the outcome (likely a win, goal, or other event) are less than 1. negative. Moreover, whenever Man Utd keeps a clean sheet in a match, the log-odds of them Winning increases. Similarly, the more goals Man Utd scores in a match, the greater the log-odds of them Winning. Moreover, if Man Utd is at home, then the log-odds of them Winning increases. 
+
+#### Defensive Actions
+Tackles in Defensive Third  and Tackles in Middle Third are positively associated with the log-odds of a Win. This suggests that successful tackles, especially in the middle third and defensive zones, are beneficial. The fact that tackles in the middle third have a relatively larger coefficient  indicates that they may be more impactful than tackles in other areas, potentially because they break up opposition attacks before they reach the defensive zone.
+
+Blocks and Shots Blocked have negative coefficients, implying that blocking shots and making defensive interventions might not always be favorable for the outcome. It could be due to the nature of these defensive actions (e.g., blocking shots might indicate a defensive team under pressure, or blocked shots could lead to dangerous rebounds).
+
+Tackling in the defensive third is slightly positive, indicating that strong defense in the team's own half is beneficial.
+Tackling in the middle third is more strongly positive, suggesting that controlling the midfield and breaking up opposition play in the center of the field is particularly important for the outcome.
+
+Shots Blocked  and the interaction between Shot Against and Blocks are negatively correlated with the outcome, suggesting that increased defensive actions like blocking shots are associated with a lower likelihood of a positive outcome. This could be due to increased pressure on defense, possibly indicating that the team is underperforming in a more vulnerable position.
+
+A team that maintains clean sheets, scores more goals, and makes tackles in the middle third is likely to be more successful, according to the model. This suggests a playing style focused on defensive stability (clean sheets, tackles) and attacking efficiency (goals, passes).
+
+# Actionable Insights for Improvement
+Improvement through offense: The model suggests focusing on improving goal-scoring ability and maintaining clean sheets as these variables have large positive coefficients. Potentially, improving current attacking positions' goal output or buying a goalscorer (Striker or Winger or Attacking Midfielder) with consistent goal output would improve the log-odds of Man Utd winning matches.
+
+Improvement through defense: Tackling in the middle third has a relatively strong positive effect, so improving midfield defense could also be beneficial. Conversely, reducing shots blocked might also be something to focus on, as these are negatively correlated with the outcome. Recommended that Man Utd improve defensively through a shot-stopping-focused goalkeeper (Keeping De Gea) and/or buying ball-winning midfielders as tackling in the middle third is strongly positive and could be interacting with the negatively correlated 'Shots-blocked' and keeping a clean-sheet.
+
+# Reflection
+I am proud of being able to apply statistical knowledge to Manchester United, and provide some insight on how they could improve based on their 22/23 statistics. Specifically, I am proud of being able to handle multicollinearity through adding a Ridge penalisation; a concept that I have never known previously. Moreover, I am proud of utilising Leave One Out Cross-Validation when assessing my model as I had also never known this method of cross-validation previously. I had only known cross validation with an 80/20 split of my data into a training and test set. Other methodologies I learned through this project include: adding weights to my glm() due to the imbalanced dataset, checking for perfect seperation, and model metrics such as precision, recall, and F-score.
+
+One thing I want to improve on is bootstrapping. Since the dataset is relatively small and my football domain knowledge that Man Utd performed consistently in 22/23, then I improve on non-parametric bootstrapping in order to simulate more observations. At the moment, I was content with keeping real results from the season.
